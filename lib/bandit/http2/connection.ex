@@ -110,11 +110,28 @@ defmodule Bandit.HTTP2.Connection do
     Bandit.HTTP2.StreamCollection.get_pids(connection.streams)
     |> Enum.each(&Bandit.HTTP2.Stream.deliver_send_window_update(&1, delta))
 
+    # Bump the connection-level send window by the same delta when the
+    # client increases SETTINGS_INITIAL_WINDOW_SIZE.  This lets gRPC
+    # servers respond in one burst instead of waiting for per-window
+    # WINDOW_UPDATE round-trips at the connection level.  Disabled by
+    # default; enable via `http_2: [bump_connection_send_window: true]`.
+    connection =
+      if bump_connection_send_window?(connection.opts, delta) do
+        %{connection | send_window_size: connection.send_window_size + delta}
+      else
+        connection
+      end
+
     do_pending_sends(socket, %{
       connection
       | remote_settings: remote_settings,
         send_hpack_state: send_hpack_state
     })
+  end
+
+  defp bump_connection_send_window?(opts, delta) do
+    h2 = Map.get(opts, :http_2, %{})
+    Keyword.get(h2, :bump_connection_send_window, true) && delta > 0
   end
 
   def handle_frame(%Bandit.HTTP2.Frame.Ping{ack: true}, _socket, connection), do: connection
